@@ -3,7 +3,9 @@ import subprocess
 import sys
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
+load_dotenv()
 
 TRACES_DIR = Path(__file__).parent / "traces"
 
@@ -36,22 +38,22 @@ def fetch_recent_traces(limit: int = 5, last_n_minutes: int | None = None):
     cmd.extend(["--include-metadata", "--include-feedback"])
 
     print(f"Fetching {limit} recent traces...")
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, env=os.environ)
     print(f"Traces saved to {TRACES_DIR}/")
 
 
 def fetch_trace_by_id(trace_id: str, output_format: str = "pretty"):
     cmd = ["langsmith-fetch", "trace", trace_id, "--format", output_format]
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, env=os.environ)
 
 
 def fetch_thread_by_id(thread_id: str, output_format: str = "pretty"):
     cmd = ["langsmith-fetch", "thread", thread_id, "--format", output_format]
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, env=os.environ)
 
 
 def show_config():
-    subprocess.run(["langsmith-fetch", "config"], check=True)
+    subprocess.run(["langsmith-fetch", "config"], check=True, env=os.environ)
 
 
 def main():

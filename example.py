@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from langchain_deep_agent.agent import (
+from agent import (
     create_deep_agent,
     DeepAgentConfig,
     run_agent,
@@ -20,7 +20,7 @@ def weather_tool(location: str) -> str:
 
 def main():
     config = DeepAgentConfig(
-        model_name="openai:gpt-4o-mini",
+        model_name="ollama:gpt-oss",
         system_prompt="""You are a helpful AI assistant.
         Use tools when needed to provide accurate answers.
         Think step by step when solving problems.""",
