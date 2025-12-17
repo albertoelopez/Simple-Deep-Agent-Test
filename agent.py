@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import os
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Sequence
 
@@ -12,6 +13,15 @@ from langgraph.prebuilt import ToolNode
 from typing_extensions import Annotated, TypedDict
 
 from langchain.chat_models import init_chat_model
+
+
+def setup_langsmith(
+    project_name: str = "langchain-deep-agent",
+    tracing_enabled: bool = True,
+) -> None:
+    if tracing_enabled:
+        os.environ.setdefault("LANGSMITH_TRACING", "true")
+        os.environ.setdefault("LANGSMITH_PROJECT", project_name)
 
 
 @tool
@@ -64,6 +74,8 @@ class DeepAgentConfig:
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     max_iterations: int = 10
     temperature: float = 0.0
+    langsmith_project: str = "langchain-deep-agent"
+    langsmith_tracing: bool = True
 
 
 def create_deep_agent(
@@ -71,6 +83,11 @@ def create_deep_agent(
     additional_tools: Sequence[BaseTool | Callable] | None = None,
     include_default_tools: bool = True,
 ) -> StateGraph:
+    setup_langsmith(
+        project_name=config.langsmith_project,
+        tracing_enabled=config.langsmith_tracing,
+    )
+
     model = init_chat_model(config.model_name, temperature=config.temperature)
 
     tools: list[BaseTool | Callable] = []
