@@ -6,5 +6,6 @@ langgraph>=0.2.0
 langsmith>=0.1.0
 langsmith-fetch>=0.1.0
 python-dotenv>=1.0.0
+chainlit>=1.0.0
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
