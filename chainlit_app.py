@@ -49,6 +49,8 @@ async def main(message: cl.Message):
         "iteration": 0,
         "next_agent": None,
         "final_answer": None,
+        "errors": [],
+        "retry_count": 0,
     }
 
     plan_shown = False
