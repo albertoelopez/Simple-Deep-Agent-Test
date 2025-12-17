@@ -26,15 +26,20 @@ def setup_langsmith(
 
 @tool
 def calculator_tool(expression: str) -> str:
-    """Evaluate a mathematical expression. Use this for any calculations."""
+    """Evaluate a mathematical expression. Use ** for exponents (e.g., 2**3 = 8).
+    Supports: +, -, *, /, **, parentheses. Example: 1000*(1+0.05)**3"""
     try:
+        expression = expression.replace("^", "**")
         allowed_chars = set("0123456789+-*/.() ")
         if not all(c in allowed_chars for c in expression):
-            return "Error: Invalid characters in expression"
+            invalid = [c for c in expression if c not in allowed_chars]
+            return f"Error: Invalid characters {invalid}. Use only numbers and +-*/() operators. Use ** for exponents."
         result = eval(expression)
-        return f"Result: {result}"
+        return f"Result: {round(result, 6)}"
+    except ZeroDivisionError:
+        return "Error: Division by zero"
     except Exception as e:
-        return f"Error evaluating expression: {e}"
+        return f"Error: {e}. Check your expression syntax."
 
 
 @tool
