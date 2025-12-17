@@ -51,89 +51,56 @@ async def main(message: cl.Message):
         "final_answer": None,
     }
 
-    current_agent = None
     plan_shown = False
 
-    async with cl.TaskList() as task_list:
-        supervisor_task = cl.Task(title="Supervisor", status=cl.TaskStatus.RUNNING)
-        await task_list.add_task(supervisor_task)
+    for chunk in agent.stream(initial_state, stream_mode="updates"):
+        for node_name, node_output in chunk.items():
+            if node_name == "supervisor":
+                next_agent = node_output.get("next_agent", "")
+                if next_agent and next_agent != "END":
+                    async with cl.Step(name=f"Routing to {next_agent}") as step:
+                        step.output = f"Supervisor delegating to {next_agent} agent"
 
-        for chunk in agent.stream(initial_state, stream_mode="updates"):
-            for node_name, node_output in chunk.items():
-                if node_name == "supervisor":
-                    next_agent = node_output.get("next_agent", "")
-                    if next_agent and next_agent != "END":
-                        supervisor_task.status = cl.TaskStatus.DONE
-                        await task_list.send()
+            elif node_name == "planner":
+                plan = node_output.get("plan", [])
+                if plan and not plan_shown:
+                    plan_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
+                    async with cl.Step(name="Planner") as step:
+                        step.output = f"**Task Breakdown:**\n{plan_text}"
+                    plan_shown = True
 
-                        current_agent = next_agent.lower()
-                        agent_task = cl.Task(
-                            title=f"{next_agent.title()} Agent",
-                            status=cl.TaskStatus.RUNNING
-                        )
-                        await task_list.add_task(agent_task)
-                        cl.user_session.set("current_task", agent_task)
+            elif node_name == "researcher":
+                results = node_output.get("sub_agent_results", {})
+                findings = results.get("research_findings", {})
+                if findings:
+                    async with cl.Step(name="Researcher") as step:
+                        step.output = "\n".join(f"**{k}:**\n{v[:300]}..." for k, v in findings.items())
 
-                elif node_name == "planner":
-                    plan = node_output.get("plan", [])
-                    if plan and not plan_shown:
-                        plan_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
-                        async with cl.Step(name="Planning") as step:
-                            step.output = f"**Task Breakdown:**\n{plan_text}"
-                        plan_shown = True
+            elif node_name == "executor":
+                results = node_output.get("sub_agent_results", {})
+                exec_results = results.get("execution_results", {})
+                if exec_results:
+                    async with cl.Step(name="Executor") as step:
+                        step.output = "\n".join(f"**{k}:**\n{v[:300]}..." for k, v in exec_results.items())
 
-                    agent_task = cl.user_session.get("current_task")
-                    if agent_task:
-                        agent_task.status = cl.TaskStatus.DONE
-                        await task_list.send()
+            elif node_name == "reflector":
+                reflection = node_output.get("reflection", "")
+                final_answer = node_output.get("final_answer")
 
-                elif node_name == "researcher":
-                    results = node_output.get("sub_agent_results", {})
-                    findings = results.get("research_findings", {})
-                    if findings:
-                        async with cl.Step(name="Research") as step:
-                            step.output = "\n".join(f"**{k}:**\n{v[:300]}..." for k, v in findings.items())
+                if reflection:
+                    async with cl.Step(name="Reflector") as step:
+                        step.output = reflection[:500]
 
-                    agent_task = cl.user_session.get("current_task")
-                    if agent_task:
-                        agent_task.status = cl.TaskStatus.DONE
-                        await task_list.send()
+                if final_answer:
+                    msg.content = final_answer
+                    await msg.update()
 
-                elif node_name == "executor":
-                    results = node_output.get("sub_agent_results", {})
-                    exec_results = results.get("execution_results", {})
-                    if exec_results:
-                        async with cl.Step(name="Execution") as step:
-                            step.output = "\n".join(f"**{k}:**\n{v[:300]}..." for k, v in exec_results.items())
-
-                    agent_task = cl.user_session.get("current_task")
-                    if agent_task:
-                        agent_task.status = cl.TaskStatus.DONE
-                        await task_list.send()
-
-                elif node_name == "reflector":
-                    reflection = node_output.get("reflection", "")
-                    final_answer = node_output.get("final_answer")
-
-                    if reflection:
-                        async with cl.Step(name="Reflection") as step:
-                            step.output = reflection[:500]
-
-                    if final_answer:
-                        msg.content = final_answer
-                        await msg.update()
-
-                    agent_task = cl.user_session.get("current_task")
-                    if agent_task:
-                        agent_task.status = cl.TaskStatus.DONE
-                        await task_list.send()
-
-                elif node_name == "tools":
-                    messages = node_output.get("messages", [])
-                    for tool_msg in messages:
-                        if hasattr(tool_msg, "name") and hasattr(tool_msg, "content"):
-                            async with cl.Step(name=f"Tool: {tool_msg.name}") as step:
-                                step.output = str(tool_msg.content)[:500]
+            elif node_name == "tools":
+                messages = node_output.get("messages", [])
+                for tool_msg in messages:
+                    if hasattr(tool_msg, "name") and hasattr(tool_msg, "content"):
+                        async with cl.Step(name=f"Tool: {tool_msg.name}") as step:
+                            step.output = str(tool_msg.content)[:500]
 
     if not msg.content:
         msg.content = "Task completed. Check the steps above for details."

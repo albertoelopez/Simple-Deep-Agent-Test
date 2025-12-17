@@ -27,7 +27,7 @@ def install_langsmith_fetch():
     subprocess.run([sys.executable, "-m", "pip", "install", "langsmith-fetch"], check=True)
 
 
-def fetch_recent_traces(limit: int = 5, last_n_minutes: int | None = None):
+def fetch_recent_traces(limit: int = 5, last_n_minutes: int | None = None, project: str = "langchain-deep-agent"):
     TRACES_DIR.mkdir(exist_ok=True)
 
     cmd = ["langsmith-fetch", "traces", str(TRACES_DIR), "--limit", str(limit)]
@@ -35,9 +35,12 @@ def fetch_recent_traces(limit: int = 5, last_n_minutes: int | None = None):
     if last_n_minutes:
         cmd.extend(["--last-n-minutes", str(last_n_minutes)])
 
+    if project:
+        cmd.extend(["--project", project])
+
     cmd.extend(["--include-metadata", "--include-feedback"])
 
-    print(f"Fetching {limit} recent traces...")
+    print(f"Fetching {limit} recent traces from project '{project}'...")
     subprocess.run(cmd, check=True, env=os.environ)
     print(f"Traces saved to {TRACES_DIR}/")
 
@@ -56,23 +59,44 @@ def show_config():
     subprocess.run(["langsmith-fetch", "config"], check=True, env=os.environ)
 
 
+def analyze_trace(trace_id: str):
+    cmd = ["langsmith-fetch", "trace", trace_id, "--format", "raw"]
+    result = subprocess.run(cmd, capture_output=True, text=True, env=os.environ)
+    if result.returncode != 0:
+        print(f"Error fetching trace: {result.stderr}")
+        return
+
+    analyze_cmd = [sys.executable, "analyze.py"]
+    subprocess.run(analyze_cmd, input=result.stdout, text=True)
+
+
+def fetch_and_analyze(limit: int = 1, project: str = "langchain-deep-agent"):
+    fetch_recent_traces(limit=limit, project=project)
+
+    traces = sorted(TRACES_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True)
+    if traces:
+        print(f"\nAnalyzing most recent trace: {traces[0].name}")
+        subprocess.run([sys.executable, "analyze.py", "1"])
+
+
 def main():
     if not check_langsmith_fetch_installed():
         install_langsmith_fetch()
 
     if len(sys.argv) < 2:
-        print("LangSmith Fetch Debug Helper")
-        print("=" * 40)
+        print("LangSmith Fetch Debug Helper for Deep Agent")
+        print("=" * 45)
         print("\nUsage:")
-        print("  python debug.py traces [limit] [--minutes N]  - Fetch recent traces")
+        print("  python debug.py traces [limit]               - Fetch recent traces")
         print("  python debug.py trace <trace-id>             - Fetch specific trace")
-        print("  python debug.py thread <thread-id>           - Fetch specific thread")
+        print("  python debug.py analyze <trace-id>           - Fetch and analyze with Ollama")
+        print("  python debug.py full                         - Fetch + analyze latest trace")
         print("  python debug.py config                       - Show config")
         print("\nExamples:")
         print("  python debug.py traces 10")
-        print("  python debug.py traces 5 --minutes 30")
-        print("  python debug.py trace 3b0b15fe-1e3a-4aef-afa8-48df15879cfe")
-        print("\nTip: Use Polly in LangSmith UI to analyze traces with AI!")
+        print("  python debug.py full")
+        print("  python debug.py analyze 3b0b15fe-1e3a-4aef-afa8-48df15879cfe")
+        print("\nProject: langchain-deep-agent")
         return
 
     command = sys.argv[1]
@@ -94,6 +118,12 @@ def main():
 
     elif command == "config":
         show_config()
+
+    elif command == "analyze" and len(sys.argv) > 2:
+        analyze_trace(sys.argv[2])
+
+    elif command == "full":
+        fetch_and_analyze()
 
     else:
         print(f"Unknown command: {command}")
