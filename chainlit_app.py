@@ -51,6 +51,7 @@ async def main(message: cl.Message):
         "final_answer": None,
         "errors": [],
         "retry_count": 0,
+        "tool_attempts": {},
     }
 
     plan_shown = False

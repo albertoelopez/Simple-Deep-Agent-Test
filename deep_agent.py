@@ -77,6 +77,7 @@ class DeepAgentState(TypedDict):
     final_answer: str | None
     errors: list[str]
     retry_count: int
+    tool_attempts: dict[str, int]
 
 
 @dataclass
@@ -88,8 +89,10 @@ class DeepAgentConfig:
     executor_model: str = "ollama:gpt-oss"
     reflector_model: str = "ollama:gpt-oss"
     system_prompt: str = "You are a helpful AI assistant with deep reasoning capabilities."
-    max_iterations: int = 20
+    max_iterations: int = 15
     max_retries: int = 2
+    max_tool_attempts: int = 3
+    recursion_limit: int = 50
     timeout_seconds: int = 60
     temperature: float = 0.0
     langsmith_project: str = "langchain-deep-agent"
@@ -314,6 +317,7 @@ def researcher_node(state: DeepAgentState, config: DeepAgentConfig) -> dict[str,
     sub_agent_results = state.get("sub_agent_results", {})
     task = state.get("task", "")
     errors = state.get("errors", [])
+    tool_attempts = state.get("tool_attempts", {})
 
     research_findings = sub_agent_results.get("research_findings", {})
 
@@ -335,7 +339,29 @@ def researcher_node(state: DeepAgentState, config: DeepAgentConfig) -> dict[str,
         }
 
     idx, current_task = pending_research[0]
-    logger.info(f"Researcher: working on '{current_task[:50]}...'")
+    task_key = f"research:{current_task[:50]}"
+    attempts = tool_attempts.get(task_key, 0)
+
+    if attempts >= config.max_tool_attempts:
+        logger.warning(f"Researcher: max tool attempts ({config.max_tool_attempts}) reached for task")
+        last_tool_result = None
+        for msg in reversed(messages[-10:]):
+            if hasattr(msg, 'content') and msg.content and 'Search results' in str(msg.content):
+                last_tool_result = str(msg.content)
+                break
+
+        research_findings[current_task] = last_tool_result or f"Research attempted but no definitive results found for: {current_task}. Based on available information, I cannot provide specific details about this query."
+
+        return {
+            "messages": [AIMessage(content=f"[Researcher] Completed research (max attempts): {current_task[:50]}...")],
+            "sub_agent_results": {
+                **sub_agent_results,
+                "research_findings": research_findings,
+            },
+            "tool_attempts": {**tool_attempts, task_key: 0},
+        }
+
+    logger.info(f"Researcher: working on '{current_task[:50]}...' (attempt {attempts + 1}/{config.max_tool_attempts})")
 
     try:
         model = init_chat_model(config.researcher_model, temperature=0.0)
@@ -346,9 +372,11 @@ def researcher_node(state: DeepAgentState, config: DeepAgentConfig) -> dict[str,
 
 Original user query: {task}
 
+IMPORTANT: You have made {attempts} previous tool attempts. If search results are insufficient, provide your best answer based on your knowledge rather than searching again.
+
 Use the search_tool to gather relevant information. If search_tool is unavailable or fails, provide the best answer you can from your knowledge.
 
-Provide clear, factual findings. If you cannot find the information, say so explicitly."""
+Provide clear, factual findings. If you cannot find the information, say so explicitly and provide what you do know."""
 
         response = model_with_tools.invoke([
             SystemMessage(content=research_prompt),
@@ -356,8 +384,11 @@ Provide clear, factual findings. If you cannot find the information, say so expl
         ])
 
         if response.tool_calls:
-            logger.info(f"Researcher: invoking tools {[tc['name'] for tc in response.tool_calls]}")
-            return {"messages": [response]}
+            logger.info(f"Researcher: invoking tools {[tc['name'] for tc in response.tool_calls]} (attempt {attempts + 1})")
+            return {
+                "messages": [response],
+                "tool_attempts": {**tool_attempts, task_key: attempts + 1},
+            }
 
         research_findings[current_task] = response.content
         logger.info(f"Researcher: completed task without tools")
@@ -368,6 +399,7 @@ Provide clear, factual findings. If you cannot find the information, say so expl
                 **sub_agent_results,
                 "research_findings": research_findings,
             },
+            "tool_attempts": {**tool_attempts, task_key: 0},
         }
 
     except Exception as e:
@@ -383,6 +415,7 @@ Provide clear, factual findings. If you cannot find the information, say so expl
                 "research_findings": research_findings,
             },
             "errors": errors + [error_msg],
+            "tool_attempts": {**tool_attempts, task_key: 0},
         }
 
 
@@ -666,7 +699,7 @@ def create_deep_agent(config: DeepAgentConfig | None = None) -> StateGraph:
         {"researcher": "researcher", "executor": "executor", "supervisor": "supervisor"}
     )
 
-    return graph.compile()
+    return graph.compile(recursion_limit=config.recursion_limit)
 
 
 def run_deep_agent(query: str, config: DeepAgentConfig | None = None, stream: bool = False) -> dict[str, Any]:
@@ -690,6 +723,7 @@ def run_deep_agent(query: str, config: DeepAgentConfig | None = None, stream: bo
         "final_answer": None,
         "errors": [],
         "retry_count": 0,
+        "tool_attempts": {},
     }
 
     if stream:
