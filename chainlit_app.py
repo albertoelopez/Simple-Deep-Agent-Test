@@ -4,23 +4,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import chainlit as cl
-from agent import DeepAgentConfig, create_deep_agent
+from deep_agent import DeepAgentConfig, create_deep_agent, DeepAgentState
+from langchain_core.messages import HumanMessage, AIMessage
 
 
 @cl.on_chat_start
 async def start():
     config = DeepAgentConfig(
         model_name="ollama:gpt-oss",
-        system_prompt="""You are a helpful AI assistant with access to various tools.
-
-You can:
-- Perform calculations using the calculator tool
-- Search for information using the search tool
-- Get the current time using the get_current_time tool
-
-Think step by step when solving complex problems. Use tools when needed to provide accurate answers.
-Always explain your reasoning and provide clear, helpful responses.""",
-        max_iterations=10,
+        supervisor_model="ollama:gpt-oss",
+        planner_model="ollama:gpt-oss",
+        researcher_model="ollama:gpt-oss",
+        executor_model="ollama:gpt-oss",
+        reflector_model="ollama:gpt-oss",
+        max_iterations=15,
         temperature=0.0,
     )
 
@@ -28,7 +25,7 @@ Always explain your reasoning and provide clear, helpful responses.""",
     cl.user_session.set("agent", agent)
 
     await cl.Message(
-        content="Hello! I'm your AI assistant. I can help you with calculations, search for information, and tell you the current time. What would you like to know?"
+        content="Hello! I'm a **Deep Agent** with hierarchical planning, specialized sub-agents, and self-reflection capabilities.\n\nI can:\n- Break down complex tasks (Planner)\n- Research information (Researcher)\n- Execute calculations (Executor)\n- Evaluate and improve my work (Reflector)\n\nWhat would you like me to help with?"
     ).send()
 
 
@@ -39,37 +36,105 @@ async def main(message: cl.Message):
     msg = cl.Message(content="")
     await msg.send()
 
-    initial_state = {
-        "messages": [{"role": "user", "content": message.content}],
-        "iteration_count": 0,
+    initial_state: DeepAgentState = {
+        "messages": [HumanMessage(content=message.content)],
+        "task": message.content,
+        "plan": [],
+        "task_hierarchy": [],
+        "current_step": 0,
+        "completed_tasks": [],
+        "sub_agent_results": {},
+        "reflection": "",
+        "memory": [],
+        "iteration": 0,
+        "next_agent": None,
+        "final_answer": None,
     }
 
-    tool_calls_made = []
+    current_agent = None
+    plan_shown = False
 
-    for chunk in agent.stream(initial_state, stream_mode="updates"):
-        if "agent" in chunk:
-            agent_output = chunk["agent"]
-            if "messages" in agent_output:
-                for m in agent_output["messages"]:
-                    if hasattr(m, "tool_calls") and m.tool_calls:
-                        for tc in m.tool_calls:
-                            tool_calls_made.append(tc["name"])
-                    elif hasattr(m, "content") and m.content:
-                        msg.content = m.content
+    async with cl.TaskList() as task_list:
+        supervisor_task = cl.Task(title="Supervisor", status=cl.TaskStatus.RUNNING)
+        await task_list.add_task(supervisor_task)
+
+        for chunk in agent.stream(initial_state, stream_mode="updates"):
+            for node_name, node_output in chunk.items():
+                if node_name == "supervisor":
+                    next_agent = node_output.get("next_agent", "")
+                    if next_agent and next_agent != "END":
+                        supervisor_task.status = cl.TaskStatus.DONE
+                        await task_list.send()
+
+                        current_agent = next_agent.lower()
+                        agent_task = cl.Task(
+                            title=f"{next_agent.title()} Agent",
+                            status=cl.TaskStatus.RUNNING
+                        )
+                        await task_list.add_task(agent_task)
+                        cl.user_session.set("current_task", agent_task)
+
+                elif node_name == "planner":
+                    plan = node_output.get("plan", [])
+                    if plan and not plan_shown:
+                        plan_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
+                        async with cl.Step(name="Planning") as step:
+                            step.output = f"**Task Breakdown:**\n{plan_text}"
+                        plan_shown = True
+
+                    agent_task = cl.user_session.get("current_task")
+                    if agent_task:
+                        agent_task.status = cl.TaskStatus.DONE
+                        await task_list.send()
+
+                elif node_name == "researcher":
+                    results = node_output.get("sub_agent_results", {})
+                    findings = results.get("research_findings", {})
+                    if findings:
+                        async with cl.Step(name="Research") as step:
+                            step.output = "\n".join(f"**{k}:**\n{v[:300]}..." for k, v in findings.items())
+
+                    agent_task = cl.user_session.get("current_task")
+                    if agent_task:
+                        agent_task.status = cl.TaskStatus.DONE
+                        await task_list.send()
+
+                elif node_name == "executor":
+                    results = node_output.get("sub_agent_results", {})
+                    exec_results = results.get("execution_results", {})
+                    if exec_results:
+                        async with cl.Step(name="Execution") as step:
+                            step.output = "\n".join(f"**{k}:**\n{v[:300]}..." for k, v in exec_results.items())
+
+                    agent_task = cl.user_session.get("current_task")
+                    if agent_task:
+                        agent_task.status = cl.TaskStatus.DONE
+                        await task_list.send()
+
+                elif node_name == "reflector":
+                    reflection = node_output.get("reflection", "")
+                    final_answer = node_output.get("final_answer")
+
+                    if reflection:
+                        async with cl.Step(name="Reflection") as step:
+                            step.output = reflection[:500]
+
+                    if final_answer:
+                        msg.content = final_answer
                         await msg.update()
 
-        if "tools" in chunk:
-            tools_output = chunk["tools"]
-            if "messages" in tools_output:
-                for tool_msg in tools_output["messages"]:
-                    if hasattr(tool_msg, "content"):
-                        step_name = getattr(tool_msg, "name", "tool")
-                        async with cl.Step(name=step_name) as step:
-                            step.output = tool_msg.content
+                    agent_task = cl.user_session.get("current_task")
+                    if agent_task:
+                        agent_task.status = cl.TaskStatus.DONE
+                        await task_list.send()
 
-    if tool_calls_made:
-        tools_used = ", ".join(set(tool_calls_made))
-        await cl.Message(
-            content=f"Tools used: {tools_used}",
-            author="system",
-        ).send()
+                elif node_name == "tools":
+                    messages = node_output.get("messages", [])
+                    for tool_msg in messages:
+                        if hasattr(tool_msg, "name") and hasattr(tool_msg, "content"):
+                            async with cl.Step(name=f"Tool: {tool_msg.name}") as step:
+                                step.output = str(tool_msg.content)[:500]
+
+    if not msg.content:
+        msg.content = "Task completed. Check the steps above for details."
+        await msg.update()
