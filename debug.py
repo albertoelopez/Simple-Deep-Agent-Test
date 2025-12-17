@@ -27,7 +27,10 @@ def install_langsmith_fetch():
     subprocess.run([sys.executable, "-m", "pip", "install", "langsmith-fetch"], check=True)
 
 
-def fetch_recent_traces(limit: int = 5, last_n_minutes: int | None = None, project: str = "langchain-deep-agent"):
+PROJECT_UUID = "d14c93e3-e03e-4349-b8de-afa5c2d5a527"
+
+
+def fetch_recent_traces(limit: int = 5, last_n_minutes: int | None = None, project_uuid: str = PROJECT_UUID):
     TRACES_DIR.mkdir(exist_ok=True)
 
     cmd = ["langsmith-fetch", "traces", str(TRACES_DIR), "--limit", str(limit)]
@@ -35,12 +38,12 @@ def fetch_recent_traces(limit: int = 5, last_n_minutes: int | None = None, proje
     if last_n_minutes:
         cmd.extend(["--last-n-minutes", str(last_n_minutes)])
 
-    if project:
-        cmd.extend(["--project", project])
+    if project_uuid:
+        cmd.extend(["--project-uuid", project_uuid])
 
     cmd.extend(["--include-metadata", "--include-feedback"])
 
-    print(f"Fetching {limit} recent traces from project '{project}'...")
+    print(f"Fetching {limit} recent traces...")
     subprocess.run(cmd, check=True, env=os.environ)
     print(f"Traces saved to {TRACES_DIR}/")
 
@@ -70,8 +73,8 @@ def analyze_trace(trace_id: str):
     subprocess.run(analyze_cmd, input=result.stdout, text=True)
 
 
-def fetch_and_analyze(limit: int = 1, project: str = "langchain-deep-agent"):
-    fetch_recent_traces(limit=limit, project=project)
+def fetch_and_analyze(limit: int = 1, project_uuid: str = PROJECT_UUID):
+    fetch_recent_traces(limit=limit, project_uuid=project_uuid)
 
     traces = sorted(TRACES_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True)
     if traces:
