@@ -50,6 +50,19 @@ Trace:
 
 
 def main():
+    if not sys.stdin.isatty():
+        stdin_data = sys.stdin.read().strip()
+        if stdin_data:
+            print("Analyzing piped trace with Ollama gpt-oss...\n")
+            print("-" * 50)
+            trace = json.loads(stdin_data)
+            if isinstance(trace, list):
+                trace = {"messages": trace}
+            question = sys.argv[1] if len(sys.argv) > 1 else None
+            analysis = analyze_trace(trace, question)
+            print(analysis)
+            return
+
     if len(sys.argv) < 2:
         print("Local Trace Analyzer (Polly Alternative)")
         print("=" * 45)
@@ -58,10 +71,12 @@ def main():
         print("  python analyze.py <trace-id> '<question>' - Ask about a trace")
         print("  python analyze.py 1                       - Analyze most recent trace")
         print("  python analyze.py list                    - List available traces")
+        print("  langsmith-fetch trace <id> | python analyze.py  - Pipe from fetch")
         print("\nExamples:")
         print("  python analyze.py 1")
         print("  python analyze.py 55b8499a-a65c-485d-976e-8937bb548977")
         print("  python analyze.py 1 'Why did the tool fail?'")
+        print("  langsmith-fetch trace <id> --format raw | python analyze.py")
         return
 
     if sys.argv[1] == "list":
